@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PDF → Markdown 분할기</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* 레이아웃: 좌측 상단 업로드/옵션, 아래에 감지된 대제목 목록과 섹션별 다운로드 카드 */
+:root{
+  --bg:#f5f6f8; --surface:#ffffff; --ink:#1b2333; --muted:#667085; --line:#dfe3ea;
+  --accent:#2447c5; --accent-ink:#ffffff; --mark:#fff0c2; --mark-ink:#6b4a00; --ok:#16794a;
+  --font:'Noto Sans KR',system-ui,-apple-system,'Apple SD Gothic Neo','Malgun Gothic',sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#12161f; --surface:#1a2030; --ink:#e8ecf5; --muted:#98a2b8; --line:#2b3347;
+  --accent:#7d9bff; --accent-ink:#0b1020; --mark:#4a3a10; --mark-ink:#ffe5a0; --ok:#5fd39b;}}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font-family:var(--font);font-size:15px;line-height:1.6;
+  padding:32px max(16px,env(safe-area-inset-left,0px)) 64px max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:920px;margin:0 auto;display:grid;gap:20px}
+h1{font-size:26px;margin:0;letter-spacing:-.01em;text-wrap:balance}
+.sub{color:var(--muted);margin:4px 0 0}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px}
+.drop{border:2px dashed var(--line);border-radius:10px;padding:32px 16px;text-align:center;cursor:pointer;
+  transition:border-color .15s,background .15s}
+.drop:hover,.drop.over,.drop:focus-visible{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 6%,transparent);outline:none}
+.drop b{display:block;font-size:16px}
+.drop span{color:var(--muted);font-size:13px}
+.opts{display:flex;flex-wrap:wrap;gap:10px 22px;margin-top:16px}
+.opts label{display:flex;align-items:center;gap:8px;cursor:pointer;font-size:14px}
+input[type=checkbox]{accent-color:var(--accent);width:16px;height:16px}
+.status{font-size:13px;color:var(--muted);font-family:var(--mono);min-height:20px;margin-top:12px}
+.bar{height:4px;background:var(--line);border-radius:2px;overflow:hidden;margin-top:8px}
+.bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .1s}
+.head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:0 0 12px}
+.head h2{font-size:17px;margin:0}
+.head small{color:var(--muted)}
+.notice{background:var(--mark);color:var(--mark-ink);border-radius:8px;padding:10px 14px;font-size:14px;margin-bottom:12px}
+.sec{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:6px 14px;align-items:center;
+  padding:12px 0;border-top:1px solid var(--line)}
+.sec:first-of-type{border-top:0}
+.sec .idx{font-family:var(--mono);font-size:12px;color:var(--muted);min-width:28px}
+.sec .t{font-weight:500;overflow-wrap:anywhere}
+.sec .m{grid-column:2;color:var(--muted);font-size:12.5px;font-family:var(--mono)}
+.btn{font:inherit;font-size:13.5px;font-weight:500;padding:7px 14px;border-radius:8px;border:1px solid var(--accent);
+  background:var(--accent);color:var(--accent-ink);cursor:pointer}
+.btn:hover{filter:brightness(1.08)}
+.btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.btn.ghost{background:transparent;color:var(--accent)}
+.sec .btn{grid-row:1/3;grid-column:3}
+.cands{display:grid;gap:2px;max-height:280px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:6px}
+.cand{display:flex;gap:10px;align-items:baseline;padding:4px 6px;border-radius:6px;cursor:pointer;font-size:14px}
+.cand:hover{background:color-mix(in srgb,var(--accent) 7%,transparent)}
+.cand em{font-style:normal;font-family:var(--mono);font-size:11.5px;color:var(--muted);flex:none}
+.cand span{overflow-wrap:anywhere;min-width:0}
+details{margin-top:6px}
+summary{cursor:pointer;color:var(--muted);font-size:13px}
+pre{margin:8px 0 0;max-height:240px;overflow:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;
+  padding:12px;font-family:var(--mono);font-size:12.5px;white-space:pre-wrap;overflow-wrap:anywhere}
+.sec>details{grid-column:1/-1}
+@media(max-width:520px){.sec{grid-template-columns:auto minmax(0,1fr)}.sec .btn{grid-row:auto;grid-column:2;justify-self:start}.sec .m{grid-column:2}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>PDF → Markdown 분할기</h1>
+    <p class="sub">PDF를 브라우저에서 바로 변환하고, 대제목 기준으로 나눠 .md 파일로 받습니다. 파일은 서버로 전송되지 않습니다.</p>
+  </header>
+
+  <section class="panel">
+    <div class="drop" id="drop" tabindex="0" role="button" aria-label="PDF 파일 선택">
+      <b>PDF 파일을 끌어다 놓거나 클릭해서 선택</b>
+      <span id="fname">선택된 파일 없음</span>
+      <input id="file" type="file" accept="application/pdf,.pdf" hidden>
+    </div>
+    <div class="opts">
+      <label><input type="checkbox" id="oChap" checked> 제1장 / 제1편 / Chapter 1</label>
+      <label><input type="checkbox" id="oRoman" checked> Ⅰ. / I. 로마자</label>
+      <label><input type="checkbox" id="oNum" checked> 1. / 1) 숫자</label>
+      <label><input type="checkbox" id="oSize"> 본문보다 큰 글자만 인정</label>
+      <label><input type="checkbox" id="oHF" checked> 반복되는 머리글·바닥글 제거</label>
+    </div>
+    <div class="status" id="status" aria-live="polite"></div>
+    <div class="bar" id="barWrap" hidden><i id="bar"></i></div>
+  </section>
+
+  <section class="panel" id="candPanel" hidden>
+    <div class="head"><h2>감지된 대제목</h2><small id="candCount"></small></div>
+    <div class="cands" id="cands"></div>
+    <p class="sub" style="font-size:13px">잘못 잡힌 항목은 체크를 해제하면 앞 섹션에 합쳐집니다.</p>
+  </section>
+
+  <section class="panel" id="resPanel" hidden>
+    <div class="head"><h2>분할 결과</h2><button class="btn ghost" id="allBtn" type="button">전체를 하나의 md로 받기</button></div>
+    <div id="notice"></div>
+    <div id="secs"></div>
+  </section>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+(function(){
+  const $=id=>document.getElementById(id);
+  const WORKER='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  let lines=[], blocks=[], baseName='document', bodySize=10, sections=[], workerReady=null;
+
+  function setStatus(t,p){ $('status').textContent=t; const w=$('barWrap'); if(p==null){w.hidden=true;return}
+    w.hidden=false; $('bar').style.width=Math.round(p*100)+'%'; }
+
+  // 워커를 blob으로 감싸 file:// 및 교차 출처 환경에서도 동작하게 함
+  function prepWorker(){
+    if(workerReady) return workerReady;
+    workerReady=fetch(WORKER).then(r=>r.text()).then(t=>{
+      pdfjsLib.GlobalWorkerOptions.workerSrc=URL.createObjectURL(new Blob([t],{type:'text/javascript'}));
+    }).catch(()=>{ pdfjsLib.GlobalWorkerOptions.workerSrc=WORKER; });
+    return workerReady;
+  }
+
+  const drop=$('drop'), fileIn=$('file');
+  drop.addEventListener('click',()=>fileIn.click());
+  drop.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();fileIn.click()}});
+  ['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('over')}));
+  ['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('over')}));
+  drop.addEventListener('drop',e=>{const f=e.dataTransfer.files[0]; if(f) load(f)});
+  fileIn.addEventListener('change',()=>{ if(fileIn.files[0]) load(fileIn.files[0]) });
+  ['oChap','oRoman','oNum','oSize'].forEach(id=>$(id).addEventListener('change',()=>{ if(lines.length){classify();render()} }));
+  $('oHF').addEventListener('change',()=>{ if(lastFile) load(lastFile) });
+
+  let lastFile=null;
+  async function load(file){
+    lastFile=file;
+    if(!/\.pdf$/i.test(file.name) && file.type!=='application/pdf'){ setStatus('PDF 파일만 선택할 수 있습니다.'); return }
+    $('fname').textContent=file.name;
+    baseName=file.name.replace(/\.pdf$/i,'');
+    $('candPanel').hidden=true; $('resPanel').hidden=true;
+    try{
+      setStatus('PDF 엔진 준비 중…',0);
+      await prepWorker();
+      const buf=await file.arrayBuffer();
+      const pdf=await pdfjsLib.getDocument({data:buf}).promise;
+      const raw=[];
+      for(let p=1;p<=pdf.numPages;p++){
+        setStatus(`페이지 읽는 중 ${p} / ${pdf.numPages}`,p/pdf.numPages);
+        const page=await pdf.getPage(p);
+        const vp=page.getViewport({scale:1});
+        const tc=await page.getTextContent();
+        raw.push(...pageLines(tc.items,p,vp.height));
+      }
+      lines=$('oHF').checked?stripHeaderFooter(raw,pdf.numPages):raw;
+      if(!lines.length){ setStatus('텍스트를 찾지 못했습니다. 스캔본 PDF라면 OCR이 필요합니다.'); return }
+      calcBody();
+      buildBlocks(); classify(); render();
+      setStatus(`완료: ${pdf.numPages}쪽, ${lines.length}줄`);
+      setTimeout(()=>setStatus(`완료: ${pdf.numPages}쪽, ${lines.length}줄`,null),400);
+    }catch(err){ console.error(err); setStatus('읽기 실패: '+(err&&err.message||err)); }
+  }
+
+  // 텍스트 조각 → 줄
+  function pageLines(items,page,H){
+    const its=items.filter(i=>i.str!=null && i.transform).map(i=>{
+      const fs=Math.hypot(i.transform[0],i.transform[1])||i.height||10;
+      return {s:i.str,x:i.transform[4],y:i.transform[5],w:i.width,fs};
+    });
+    its.sort((a,b)=>b.y-a.y||a.x-b.x);
+    const out=[]; let cur=null;
+    for(const it of its){
+      if(!it.s.length) continue;
+      if(cur && Math.abs(it.y-cur.y)<=Math.max(cur.size,it.fs)*0.45){ cur.parts.push(it); cur.size=Math.max(cur.size,it.fs); }
+      else{ cur={y:it.y,size:it.fs,parts:[it],page,H}; out.push(cur); }
+    }
+    return out.map(l=>{
+      l.parts.sort((a,b)=>a.x-b.x);
+      let t='',end=null;
+      for(const p of l.parts){
+        if(end!=null && p.x-end>l.size*0.2 && !/\s$/.test(t) && !/^\s/.test(p.s)) t+=' ';
+        t+=p.s; end=p.x+p.w;
+      }
+      let chars=0; l.parts.forEach(p=>chars+=p.s.length);
+      return {text:t.replace(/\s+/g,' ').trim(),size:Math.round(l.size*2)/2,y:l.y,page:l.page,top:1-l.y/l.H,chars,x:l.parts[0].x};
+    }).filter(l=>l.text);
+  }
+
+  // 반복되는 머리글/바닥글, 단독 쪽번호 제거
+  function stripHeaderFooter(all,n){
+    const norm=t=>t.replace(/\d+/g,'#');
+    const cnt=new Map();
+    all.forEach(l=>{ if(l.top<0.09||l.top>0.91){ const k=norm(l.text); cnt.set(k,(cnt.get(k)||0)+1) } });
+    return all.filter(l=>{
+      if(l.top<0.09||l.top>0.91){
+        if(/^[-–\s]*\d+[-–\s]*(\/\s*\d+)?$/.test(l.text)) return false;
+        if(n>=4 && cnt.get(norm(l.text))>=Math.max(3,n*0.5)) return false;
+      }
+      return true;
+    });
+  }
+
+  function calcBody(){
+    const h=new Map(); lines.forEach(l=>h.set(l.size,(h.get(l.size)||0)+l.chars));
+    let best=10,bc=-1; h.forEach((c,s)=>{ if(c>bc){bc=c;best=s} }); bodySize=best;
+  }
+
+  // 줄 → 문단 블록
+  function buildBlocks(){
+    blocks=[]; let para=null, prev=null;
+    const flush=()=>{ if(para){ blocks.push(para); para=null } };
+    for(const l of lines){
+      const t=l.text;
+      const isList=/^([•◦▪■□○●◆◇※·ㆍ-]|\u2022)\s*/.test(t) && t.length>1;
+      const isHeadish=headLevel(t)>0 && t.length<=70;
+      const gap=prev && prev.page===l.page ? (prev.y-l.y) : 0;
+      const bigGap=prev && prev.page===l.page && gap>bodySize*1.9;
+      const sizeJump=prev && Math.abs(prev.size-l.size)>=1.5;
+      if(isHeadish||sizeJump&&l.size>=bodySize*1.15&&t.length<=60){
+        flush();
+        blocks.push({type:'head',text:t,size:l.size,page:l.page,lvl:headLevel(t)});
+      }else if(isList){
+        flush(); para={type:'li',text:t.replace(/^[^\s]+\s*/,'')};
+      }else if(!para||bigGap||prev&&prev.size!==l.size&&Math.abs(prev.size-l.size)>=1.5){
+        flush(); para={type:'p',text:t};
+      }else{
+        para.text+=(/[-]$/.test(para.text)&&false?'':' ')+t;
+      }
+      prev=l;
+    }
+    flush();
+  }
+
+  // 0=아님, 1=대제목 후보, 2=중제목, 3=소제목
+  const RE={
+    chap:/^(제\s*\d+\s*[장편부]|chapter\s+\d+|part\s+\d+)(\s|[.:]|$)/i,
+    roman:/^([ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]+|[IVX]{1,5})\s*[.\)]?\s+\S|^[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]+[.\s]/,
+    num:/^\d{1,2}\s*[.\)]\s*(?!\d)\S/,
+    sub:/^\d{1,2}\.\d{1,2}(\.\d{1,2})?\s*\S/,
+    sub3:/^(\(\d{1,2}\)|[가-하][.\)])\s*\S/
+  };
+  function headLevel(t){
+    if(t.length>70) return 0;
+    if(RE.sub.test(t)) return 2;
+    if(RE.chap.test(t)) return 1;
+    if(RE.roman.test(t) && !/^[IVX]{1,5}\s+[a-z]/.test(t)) return 1;
+    if(RE.num.test(t)) return 1;
+    if(RE.sub3.test(t)) return 3;
+    return 0;
+  }
+  function isMajor(b){
+    const t=b.text;
+    if($('oSize').checked && b.size<bodySize*1.1) return false;
+    if(RE.chap.test(t)) return $('oChap').checked;
+    if(RE.roman.test(t)&&!/^[IVX]{1,5}\s+[a-z]/.test(t)) return $('oRoman').checked;
+    if(RE.num.test(t)&&!RE.sub.test(t)) return $('oNum').checked;
+    return false;
+  }
+
+  let cands=[];
+  function classify(){
+    const prevState=new Map(cands.map(c=>[c.b.text+'|'+c.b.page,c.on]));
+    cands=[];
+    blocks.forEach(b=>{
+      b.major=false;
+      if(b.type==='head' && isMajor(b)){
+        b.major=true;
+        const k=b.text+'|'+b.page;
+        cands.push({b,on:prevState.has(k)?prevState.get(k):true});
+      }
+    });
+  }
+
+  // 섹션 구성
+  function buildSections(){
+    const secs=[]; let cur={title:'머리말 (대제목 이전)',body:[],pre:true};
+    secs.push(cur);
+    const on=new Set(cands.filter(c=>c.on).map(c=>c.b));
+    blocks.forEach(b=>{
+      if(on.has(b)){ cur={title:b.text,body:[],pre:false,page:b.page}; secs.push(cur); return }
+      cur.body.push(b);
+    });
+    return secs.filter(s=>!s.pre||s.body.length);
+  }
+  function toMd(blks){
+    const out=[]; let lastLi=false;
+    blks.forEach(b=>{
+      if(b.type==='head'){
+        const lv=b.major?2:(b.lvl===2?2:3);
+        out.push('\n'+'#'.repeat(lv+1)+' '+b.text+'\n'); lastLi=false;
+      }else if(b.type==='li'){ out.push('- '+b.text); lastLi=true; }
+      else{ out.push((lastLi?'\n':'')+b.text+'\n'); lastLi=false; }
+    });
+    return out.join('\n').replace(/\n{3,}/g,'\n\n').trim()+'\n';
+  }
+  const safe=s=>s.replace(/[\\/:*?"<>|]/g,'').replace(/\s+/g,' ').trim().slice(0,60)||'section';
+  function download(name,text){
+    const url=URL.createObjectURL(new Blob(['\ufeff'+text],{type:'text/markdown;charset=utf-8'}));
+    const a=document.createElement('a'); a.href=url; a.download=name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),1500);
+  }
+
+  function render(){
+    // 후보 목록
+    $('candPanel').hidden=!cands.length;
+    $('candCount').textContent=`${cands.filter(c=>c.on).length} / ${cands.length}개 사용`;
+    const box=$('cands'); box.textContent='';
+    cands.forEach((c,i)=>{
+      const lab=document.createElement('label'); lab.className='cand';
+      const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=c.on; cb.id='cand'+i;
+      cb.addEventListener('change',()=>{c.on=cb.checked; render()});
+      const em=document.createElement('em'); em.textContent=c.b.page+'쪽';
+      const sp=document.createElement('span'); sp.textContent=c.b.text;
+      lab.append(cb,em,sp); box.appendChild(lab);
+    });
+    // 결과
+    sections=buildSections();
+    $('resPanel').hidden=false;
+    $('notice').textContent='';
+    if(!cands.some(c=>c.on)){
+      const d=document.createElement('div'); d.className='notice';
+      d.textContent='대제목을 찾지 못해 문서 전체를 하나의 파일로 만들었습니다. 위의 감지 옵션을 바꿔 보세요.';
+      $('notice').appendChild(d);
+    }
+    const list=$('secs'); list.textContent='';
+    const pad=String(sections.length).length;
+    sections.forEach((s,i)=>{
+      const md=(s.pre?'':'# '+s.title+'\n\n')+toMd(s.body);
+      const fn=String(i+1).padStart(Math.max(2,pad),'0')+'_'+safe(s.title)+'.md';
+      const row=document.createElement('div'); row.className='sec';
+      const idx=document.createElement('div'); idx.className='idx'; idx.textContent=String(i+1).padStart(2,'0');
+      const t=document.createElement('div'); t.className='t'; t.textContent=s.title;
+      const m=document.createElement('div'); m.className='m'; m.textContent=`${fn} · ${md.length.toLocaleString()}자`;
+      const btn=document.createElement('button'); btn.type='button'; btn.className='btn'; btn.textContent='.md 다운로드';
+      btn.addEventListener('click',()=>download(fn,md));
+      const det=document.createElement('details'); const sm=document.createElement('summary'); sm.textContent='미리보기';
+      const pre=document.createElement('pre'); pre.textContent=md.slice(0,3000)+(md.length>3000?'\n…':'');
+      det.append(sm,pre);
+      row.append(idx,t,btn,m,det); list.appendChild(row);
+    });
+    $('allBtn').onclick=()=>{
+      const all=sections.map(s=>(s.pre?'':'# '+s.title+'\n\n')+toMd(s.body)).join('\n');
+      download(safe(baseName)+'.md',all);
+    };
+  }
+})();
+</script>
+</body>
+</html>
